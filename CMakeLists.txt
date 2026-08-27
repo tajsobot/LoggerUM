@@ -15,3 +15,5 @@ add_custom_command(TARGET LoggerUM POST_BUILD
         ${GOIO_SDK_DIR}/GoIO_DLL/Win64/GoIO_DLL.dll
         $<TARGET_FILE_DIR:LoggerUM>
 )
+
+target_compile_definitions(LoggerUM PRIVATE TARGET_OS_WIN)
