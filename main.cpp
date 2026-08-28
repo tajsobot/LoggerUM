@@ -1,20 +1,73 @@
-// gui_main.cpp
-//
-// Bare ImGui + SDL3 + OpenGL3 window. Deliberately has zero sensor code --
-// the point of this file is to prove the GUI stack builds and runs on its
-// own, so if something breaks later you know which half (GUI vs. sensor)
-// is at fault.
-
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
 
 #include <cstdio>
+#include <iostream>
 #include <string>
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
 
+#include <cstdio>
+#include <windows.h>
+#include "GoIO_DLL_interface.h"
+
+//GoIO ------------------------------------------------------------------------------------------------
+bool testGoIO() {
+  GoIO_Init();
+
+  // Find the first available Go!Motion.
+  char deviceName[GOIO_MAX_SIZE_DEVICE_NAME];
+  int numFound = GoIO_UpdateListOfAvailableDevices(VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID);
+  if (numFound <= 0) {
+    printf("No Go!Motion found.\n");
+    GoIO_Uninit();
+    return 1;
+  }
+  GoIO_GetNthAvailableDeviceName(deviceName, GOIO_MAX_SIZE_DEVICE_NAME,
+                                 VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID, 0);
+
+  GOIO_SENSOR_HANDLE hDevice = GoIO_Sensor_Open(deviceName, VERNIER_DEFAULT_VENDOR_ID,
+                                                 CYCLOPS_DEFAULT_PRODUCT_ID, 0);
+  if (hDevice == nullptr) {
+    printf("Failed to open Go!Motion.\n");
+    GoIO_Uninit();
+    return 1;
+  }
+
+  double taj_period = 0.1;
+
+  // Start the sensor sampling at 40ms/measurement.
+  GoIO_Sensor_SetMeasurementPeriod(hDevice, taj_period, SKIP_TIMEOUT_MS_DEFAULT);
+  GoIO_Sensor_SendCmdAndGetResponse(hDevice, SKIP_CMD_ID_START_MEASUREMENTS,
+                                     NULL, 0, NULL, NULL, SKIP_TIMEOUT_MS_DEFAULT);
+
+  // The sensor is asynchronous -- give it time for at least one 40ms cycle
+  // to complete before asking for a reading.
+  Sleep(taj_period * 1000 * 5);
+
+  // bool mes_not_null = false;
+  // while (mes_not_null) {
+  //
+  // }
+
+  // GetLatestRawMeasurement() is the purpose-built call for "just give me
+  // one value" -- no array, no count, unlike ReadRawMeasurements().
+
+  gtype_int32 raw = GoIO_Sensor_GetLatestRawMeasurement(hDevice);
+  double volts  = GoIO_Sensor_ConvertToVoltage(hDevice, raw);   // for Go!Motion this IS meters already
+  double meters = GoIO_Sensor_CalibrateData(hDevice, volts);   // pass-through for this sensor
+
+  printf("Distance: %.3f m\n", meters);
+
+  GoIO_Sensor_Close(hDevice);
+  GoIO_Uninit();
+  return 0;
+}
+
+
+//UI ------------------------------------------------------------------------------------------------
 bool CenteredButton(const char* label) {
   ImGuiStyle& style = ImGui::GetStyle();
   float buttonWidth = ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f;
@@ -44,13 +97,14 @@ void SetGlobalScaleAndStyle(float scale, bool lightMode) {
   ImGui::GetIO().FontGlobalScale = scale;
 }
 
-
 int main() {
+
+
+
   if (!SDL_Init(SDL_INIT_VIDEO)) {
       printf("SDL_Init failed: %s\n", SDL_GetError());
       return 1;
   }
-
 
   // baseline that ImGui's OpenGL3 backend targets by default.
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -58,7 +112,7 @@ int main() {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
 
   static bool isLightMode = true;
-  static float globalScale = 1.0f;
+  static float globalScale = 2.0f;
 
   static int wHeight = 300*2 + 30;
   static int wWidth = 600*2 + 30;
@@ -97,9 +151,16 @@ int main() {
 
   static bool isMeasurementRunning = false;
 
-  static std::string outputFilename = "output";
-  static std::string outputFileType = "txt";
+  static std::string outputFilename = "data";
+  static std::string outputDelimiter = ";";
+  static std::string outputSeperator = ".";
 
+  static double measuringTime = 10.0; //s
+  static double measuringRate = 10.0; //Hz
+
+
+  enum class OutputFormat { TXT, CSV };
+  static OutputFormat outputFormat = OutputFormat::TXT;
 
   bool isMainLoopRunning = true;
   //main loop
@@ -123,7 +184,7 @@ int main() {
     static char textBuf[128] = "";
     static int clickCount = 0;
 
-    //SETTINGS
+    //SETTINGS -------------------------------------------------------------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Always);
     ImGui::Begin("SETTINGS", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse);
@@ -144,7 +205,7 @@ int main() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Reset scale")) {
-      globalScale = 1.0f;
+      globalScale = 2.0f;
     }
     ImGui::SameLine();
     if (ImGui::Button("+0.25x")) {
@@ -153,31 +214,126 @@ int main() {
     SetGlobalScaleAndStyle(globalScale, isLightMode);
     ImGui::End();
 
-    //INPUT CONFIG
+
+    //INPUT CONFIG -------------------------------------------------------------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(620, 10), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
     ImGui::Begin("INPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
     //sensor dropdown
-    //test
-    //set 0
-    //calibrate
-    //time based {M,T | T M/s}
+    const char* deviceOptions[] = { "Go!Motion", "Go!Temperature" };
+    static int deviceIndex = 0; // 0 = txt, 1 = csv -- kept in sync with outputFormat below
+    ImGui::Text("Device:");
+    if (ImGui::Combo("##Output format", &deviceIndex, deviceOptions, IM_ARRAYSIZE(deviceOptions))) {
+    //todo
+    }
+    if (ImGui::Button("Test")) {
+
+    }
+    ImGui::Text("Time [s]:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100.0f);
+    static char measurementTimeBuff[128] = "";
+    if (ImGui::InputText("##MeasurementTime", measurementTimeBuff, sizeof(measurementTimeBuff))) {
+      try {
+        measuringTime = std::stoi(measurementTimeBuff);
+      }
+      catch (const std::invalid_argument&) {
+        std::cout << "NaN" << std::endl;
+      }
+      catch (const std::out_of_range&) {
+        std::cout << "range" << std::endl;
+      }
+    }
+
+    ImGui::Text("Rate [Hz]:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100.0f);
+
+    static char measurementRateBuff[128] = "";
+    if (ImGui::InputText("##MeasurementRate", measurementRateBuff, sizeof(measurementRateBuff))) {
+      try {
+        measuringRate = std::stoi(measurementRateBuff);
+        std::cout << measuringRate << std::endl;
+      }
+      catch (const std::invalid_argument&) {
+        std::cout << "NaN" << std::endl;
+      }
+      catch (const std::out_of_range&) {
+        std::cout << "range" << std::endl;
+      }
+    }
+
     ImGui::End();
 
-    //OUTPUT CONFIG
+    //OUTPUT CONFIG -------------------------------------------------------------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(620, 320), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
     ImGui::Begin("OUTPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse);
     //output filename
-    //output filetype
-    //output delimiter
+    ImGui::Text("Output filename:");
+    static char outputFilenameBuf[128] = "";
+    static bool seeded = false;
+    if (!seeded) {
+      snprintf(outputFilenameBuf, sizeof(outputFilenameBuf), "%s", outputFilename.c_str());
+      seeded = true;
+    }
+    if (ImGui::InputText("##OutputFilename", outputFilenameBuf, sizeof(outputFilenameBuf))) {
+      outputFilename = outputFilenameBuf;
+    }
+
+    //output format
+    const char* formatOptions[] = { "txt", "csv" };
+    static int formatIndex = 0; // 0 = txt, 1 = csv -- kept in sync with outputFormat below
+    ImGui::Text("Output format:");
+    if (ImGui::Combo("##Output format", &formatIndex, formatOptions, IM_ARRAYSIZE(formatOptions))) {
+      outputFormat = (formatIndex == 0) ? OutputFormat::TXT : OutputFormat::CSV;
+    }
+
+    //output delimiter inputbox
+    static char outputDelimiterBuf[128] = "";
+    ImGui::Text("Delimiter:");
+    ImGui::SameLine();
+    seeded = false;
+    if (!seeded) {
+      snprintf(outputDelimiterBuf, sizeof(outputDelimiterBuf), "%s", outputDelimiter.c_str());
+      seeded = true;
+    }
+    ImGui::SetNextItemWidth(30.0f);
+    if (ImGui::InputText("##OutputDelimiter", outputDelimiterBuf, sizeof(outputDelimiterBuf))) {
+      outputDelimiter = outputDelimiterBuf;
+    }
+
     //output sepetrator
+    static char outputSeperatorBuf[128] = "";
+    ImGui::SameLine();
+    ImGui::Text("Seperator:");
+    ImGui::SameLine();
+    seeded = false;
+    if (!seeded) {
+      snprintf(outputSeperatorBuf, sizeof(outputSeperatorBuf), "%s", outputSeperator.c_str());
+      seeded = true;
+    }
+    ImGui::SetNextItemWidth(30.0f);
+    if (ImGui::InputText("##OutputSeperator", outputSeperatorBuf, sizeof(outputSeperatorBuf))) {
+      outputSeperator = outputSeperatorBuf;
+    }
+
+    std::string finalFilenameString = "Filename: " + outputFilename + "." + formatOptions[formatIndex];
+    ImGui::Text(finalFilenameString.c_str());
     ImGui::End();
 
-    //MEASUREMENT
+
+    //MEASUREMENT -------------------------------------------------------------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(10, 320), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
     ImGui::Begin("MEASUREMENT", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse);
+    std::string measuremetStatus = "idle";
+    if (isMeasurementRunning) {
+      measuremetStatus = "running";
+    }
+
+    ImGui::Text(("Status: " + measuremetStatus).c_str());
+
     if (ImGui::Button("START")) {
       isMeasurementRunning = true; //todo
     }
