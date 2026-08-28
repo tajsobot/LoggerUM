@@ -23,7 +23,7 @@ bool testGoIO() {
  if (numFound <= 0) {
    printf("No Go!Motion found.\n");
    GoIO_Uninit();
-   return 1;
+   return false;
  }
  GoIO_GetNthAvailableDeviceName(deviceName, GOIO_MAX_SIZE_DEVICE_NAME,
                                 VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID, 0);
@@ -33,11 +33,11 @@ bool testGoIO() {
  if (hDevice == nullptr) {
    printf("Failed to open Go!Motion.\n");
    GoIO_Uninit();
-   return 1;
+   return false;
  }
 
  // Start the sensor sampling at 40ms/measurement.
- GoIO_Sensor_SetMeasurementPeriod(hDevice, 0.10, SKIP_TIMEOUT_MS_DEFAULT);
+ GoIO_Sensor_SetMeasurementPeriod(hDevice, 0.04, SKIP_TIMEOUT_MS_DEFAULT);
  GoIO_Sensor_SendCmdAndGetResponse(hDevice, SKIP_CMD_ID_START_MEASUREMENTS,
                                     NULL, 0, NULL, NULL, SKIP_TIMEOUT_MS_DEFAULT);
 
@@ -50,8 +50,13 @@ bool testGoIO() {
 
  GoIO_Sensor_Close(hDevice);
  GoIO_Uninit();
- return 0;
+ return true;
 }
+
+bool mesureGoIOTimeRate(double time, double rate) {
+  return true;
+}
+
 
 
 //UI ------------------------------------------------------------------------------------------------
@@ -139,10 +144,13 @@ int main() {
 
   static double measuringTime = 10.0; //s
   static double measuringRate = 10.0; //Hz
+  std::string testStringGoIO;
 
 
   enum class OutputFormat { TXT, CSV };
   static OutputFormat outputFormat = OutputFormat::TXT;
+
+
 
   bool isMainLoopRunning = true;
   //main loop
@@ -209,8 +217,17 @@ int main() {
     //todo
     }
     if (ImGui::Button("Test")) {
-      testGoIO();
+      if (testGoIO()) {
+        testStringGoIO = "Sucess!";
+      }
+      else {
+        testStringGoIO = "Failed!";
+      }
     }
+    ImGui::SameLine();
+    ImGui::Text(testStringGoIO.c_str());
+
+
     ImGui::Text("Time [s]:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(100.0f);
