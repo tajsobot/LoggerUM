@@ -17,8 +17,6 @@ set(GOIO_SDK_DIR ${CMAKE_SOURCE_DIR}/libraries/GoIO/redist)
 add_subdirectory(libraries/SDL EXCLUDE_FROM_ALL)
 
 # ---- Dear ImGui (GUI widgets) ----
-# ImGui ships no CMakeLists of its own -- vendor its source and compile it
-# directly into the target, backends included.
 FetchContent_Declare(
         imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -44,6 +42,14 @@ target_include_directories(LoggerUM PRIVATE
         ${imgui_SOURCE_DIR}
         ${imgui_SOURCE_DIR}/backends
 )
+
+if (WIN32)
+    target_compile_definitions(LoggerUM PRIVATE TARGET_OS_WIN)
+elseif (APPLE)
+    target_compile_definitions(LoggerUM PRIVATE TARGET_OS_MAC)
+elseif (LINUX)
+    target_compile_definitions(LoggerUM PRIVATE TARGET_OS_LINUX)
+endif()
 
 target_link_libraries(LoggerUM PRIVATE
         SDL3::SDL3

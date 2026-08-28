@@ -15,55 +15,42 @@
 
 //GoIO ------------------------------------------------------------------------------------------------
 bool testGoIO() {
-  GoIO_Init();
+ GoIO_Init();
 
-  // Find the first available Go!Motion.
-  char deviceName[GOIO_MAX_SIZE_DEVICE_NAME];
-  int numFound = GoIO_UpdateListOfAvailableDevices(VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID);
-  if (numFound <= 0) {
-    printf("No Go!Motion found.\n");
-    GoIO_Uninit();
-    return 1;
-  }
-  GoIO_GetNthAvailableDeviceName(deviceName, GOIO_MAX_SIZE_DEVICE_NAME,
-                                 VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID, 0);
+ // Find the first available Go!Motion.
+ char deviceName[GOIO_MAX_SIZE_DEVICE_NAME];
+ int numFound = GoIO_UpdateListOfAvailableDevices(VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID);
+ if (numFound <= 0) {
+   printf("No Go!Motion found.\n");
+   GoIO_Uninit();
+   return 1;
+ }
+ GoIO_GetNthAvailableDeviceName(deviceName, GOIO_MAX_SIZE_DEVICE_NAME,
+                                VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID, 0);
 
-  GOIO_SENSOR_HANDLE hDevice = GoIO_Sensor_Open(deviceName, VERNIER_DEFAULT_VENDOR_ID,
-                                                 CYCLOPS_DEFAULT_PRODUCT_ID, 0);
-  if (hDevice == nullptr) {
-    printf("Failed to open Go!Motion.\n");
-    GoIO_Uninit();
-    return 1;
-  }
+ GOIO_SENSOR_HANDLE hDevice = GoIO_Sensor_Open(deviceName, VERNIER_DEFAULT_VENDOR_ID,
+                                                CYCLOPS_DEFAULT_PRODUCT_ID, 0);
+ if (hDevice == nullptr) {
+   printf("Failed to open Go!Motion.\n");
+   GoIO_Uninit();
+   return 1;
+ }
 
-  double taj_period = 0.1;
+ // Start the sensor sampling at 40ms/measurement.
+ GoIO_Sensor_SetMeasurementPeriod(hDevice, 0.10, SKIP_TIMEOUT_MS_DEFAULT);
+ GoIO_Sensor_SendCmdAndGetResponse(hDevice, SKIP_CMD_ID_START_MEASUREMENTS,
+                                    NULL, 0, NULL, NULL, SKIP_TIMEOUT_MS_DEFAULT);
 
-  // Start the sensor sampling at 40ms/measurement.
-  GoIO_Sensor_SetMeasurementPeriod(hDevice, taj_period, SKIP_TIMEOUT_MS_DEFAULT);
-  GoIO_Sensor_SendCmdAndGetResponse(hDevice, SKIP_CMD_ID_START_MEASUREMENTS,
-                                     NULL, 0, NULL, NULL, SKIP_TIMEOUT_MS_DEFAULT);
+  Sleep(300);
+ gtype_int32 raw = GoIO_Sensor_GetLatestRawMeasurement(hDevice);
+ double volts  = GoIO_Sensor_ConvertToVoltage(hDevice, raw);   // for Go!Motion this IS meters already
+ double meters = GoIO_Sensor_CalibrateData(hDevice, volts);   // pass-through for this sensor
 
-  // The sensor is asynchronous -- give it time for at least one 40ms cycle
-  // to complete before asking for a reading.
-  Sleep(taj_period * 1000 * 5);
+ printf("Distance: %.3f m\n", meters);
 
-  // bool mes_not_null = false;
-  // while (mes_not_null) {
-  //
-  // }
-
-  // GetLatestRawMeasurement() is the purpose-built call for "just give me
-  // one value" -- no array, no count, unlike ReadRawMeasurements().
-
-  gtype_int32 raw = GoIO_Sensor_GetLatestRawMeasurement(hDevice);
-  double volts  = GoIO_Sensor_ConvertToVoltage(hDevice, raw);   // for Go!Motion this IS meters already
-  double meters = GoIO_Sensor_CalibrateData(hDevice, volts);   // pass-through for this sensor
-
-  printf("Distance: %.3f m\n", meters);
-
-  GoIO_Sensor_Close(hDevice);
-  GoIO_Uninit();
-  return 0;
+ GoIO_Sensor_Close(hDevice);
+ GoIO_Uninit();
+ return 0;
 }
 
 
@@ -98,9 +85,6 @@ void SetGlobalScaleAndStyle(float scale, bool lightMode) {
 }
 
 int main() {
-
-
-
   if (!SDL_Init(SDL_INIT_VIDEO)) {
       printf("SDL_Init failed: %s\n", SDL_GetError());
       return 1;
@@ -116,7 +100,6 @@ int main() {
 
   static int wHeight = 300*2 + 30;
   static int wWidth = 600*2 + 30;
-
 
   SDL_Window* window = SDL_CreateWindow(
     "LoggerUM",
@@ -142,7 +125,6 @@ int main() {
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
-
 
   SetGlobalScaleAndStyle(globalScale, true);
 
@@ -218,7 +200,7 @@ int main() {
     //INPUT CONFIG -------------------------------------------------------------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(620, 10), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
-    ImGui::Begin("INPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("INPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
     //sensor dropdown
     const char* deviceOptions[] = { "Go!Motion", "Go!Temperature" };
     static int deviceIndex = 0; // 0 = txt, 1 = csv -- kept in sync with outputFormat below
@@ -227,7 +209,7 @@ int main() {
     //todo
     }
     if (ImGui::Button("Test")) {
-
+      testGoIO();
     }
     ImGui::Text("Time [s]:");
     ImGui::SameLine();
@@ -268,7 +250,7 @@ int main() {
     //OUTPUT CONFIG -------------------------------------------------------------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(620, 320), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
-    ImGui::Begin("OUTPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("OUTPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
     //output filename
     ImGui::Text("Output filename:");
     static char outputFilenameBuf[128] = "";
@@ -326,7 +308,7 @@ int main() {
     //MEASUREMENT -------------------------------------------------------------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(10, 320), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
-    ImGui::Begin("MEASUREMENT", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("MEASUREMENT", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
     std::string measuremetStatus = "idle";
     if (isMeasurementRunning) {
       measuremetStatus = "running";
