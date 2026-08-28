@@ -1,63 +1,224 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
+#include <windows.h>
 
+#include <chrono>
 #include <cstdio>
 #include <iostream>
 #include <string>
+#include <thread>
+#include <vector>
 
+#include <fstream>
+#include <iomanip>
+
+
+#include "GoIO_DLL_interface.h"
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl3.h"
 
-#include <cstdio>
-#include <windows.h>
-#include "GoIO_DLL_interface.h"
 
 //GoIO ------------------------------------------------------------------------------------------------
 bool testGoIO() {
- GoIO_Init();
+  GoIO_Init();
 
- // Find the first available Go!Motion.
- char deviceName[GOIO_MAX_SIZE_DEVICE_NAME];
- int numFound = GoIO_UpdateListOfAvailableDevices(VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID);
- if (numFound <= 0) {
+  // Find the first available Go!Motion.
+  char deviceName[GOIO_MAX_SIZE_DEVICE_NAME];
+  int numFound = GoIO_UpdateListOfAvailableDevices(VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID);
+  if (numFound <= 0) {
    printf("No Go!Motion found.\n");
    GoIO_Uninit();
    return false;
- }
- GoIO_GetNthAvailableDeviceName(deviceName, GOIO_MAX_SIZE_DEVICE_NAME,
+  }
+  GoIO_GetNthAvailableDeviceName(deviceName, GOIO_MAX_SIZE_DEVICE_NAME,
                                 VERNIER_DEFAULT_VENDOR_ID, CYCLOPS_DEFAULT_PRODUCT_ID, 0);
 
- GOIO_SENSOR_HANDLE hDevice = GoIO_Sensor_Open(deviceName, VERNIER_DEFAULT_VENDOR_ID,
+  GOIO_SENSOR_HANDLE hDevice = GoIO_Sensor_Open(deviceName, VERNIER_DEFAULT_VENDOR_ID,
                                                 CYCLOPS_DEFAULT_PRODUCT_ID, 0);
- if (hDevice == nullptr) {
+  if (hDevice == nullptr) {
    printf("Failed to open Go!Motion.\n");
    GoIO_Uninit();
    return false;
- }
+  }
 
- // Start the sensor sampling at 40ms/measurement.
- GoIO_Sensor_SetMeasurementPeriod(hDevice, 0.04, SKIP_TIMEOUT_MS_DEFAULT);
- GoIO_Sensor_SendCmdAndGetResponse(hDevice, SKIP_CMD_ID_START_MEASUREMENTS,
-                                    NULL, 0, NULL, NULL, SKIP_TIMEOUT_MS_DEFAULT);
+  // Start the sensor sampling at 40ms/measurement.
+  GoIO_Sensor_SetMeasurementPeriod(hDevice, 0.04, SKIP_TIMEOUT_MS_DEFAULT);
+  GoIO_Sensor_SendCmdAndGetResponse(hDevice, SKIP_CMD_ID_START_MEASUREMENTS,NULL, 0, NULL, NULL, SKIP_TIMEOUT_MS_DEFAULT);
 
   Sleep(300);
- gtype_int32 raw = GoIO_Sensor_GetLatestRawMeasurement(hDevice);
- double volts  = GoIO_Sensor_ConvertToVoltage(hDevice, raw);   // for Go!Motion this IS meters already
- double meters = GoIO_Sensor_CalibrateData(hDevice, volts);   // pass-through for this sensor
 
- printf("Distance: %.3f m\n", meters);
-
- GoIO_Sensor_Close(hDevice);
- GoIO_Uninit();
- return true;
-}
-
-bool mesureGoIOTimeRate(double time, double rate) {
+  gtype_int32 raw = GoIO_Sensor_GetLatestRawMeasurement(hDevice);
+  double volts  = GoIO_Sensor_ConvertToVoltage(hDevice, raw);   // for Go!Motion this IS meters already
+  double meters = GoIO_Sensor_CalibrateData(hDevice, volts);   // pass-through for this sensor
+  printf("Test distance: %.3f m\n", meters);
+  GoIO_Sensor_Close(hDevice);
+  GoIO_Uninit();
   return true;
 }
 
+std::vector<std::vector<double>> mesureGoIOTimeRate(double time, double frequency){
+    std::vector<std::vector<double>> measurements;
 
+    if (time <= 0.0 || frequency <= 0.0)
+        return measurements;
+
+    // Frequency [Hz] -> period [s]
+    double period = 1.0 / frequency;
+
+    // Cyclops: 20 ms minimum period according to the SDK source
+    if (period < 0.020)
+        period = 0.020;
+
+    GoIO_Init();
+
+    char deviceName[GOIO_MAX_SIZE_DEVICE_NAME];
+
+    int numFound = GoIO_UpdateListOfAvailableDevices(
+        VERNIER_DEFAULT_VENDOR_ID,
+        CYCLOPS_DEFAULT_PRODUCT_ID
+    );
+
+    if (numFound <= 0) {
+        GoIO_Uninit();
+        return measurements;
+    }
+
+    GoIO_GetNthAvailableDeviceName(
+        deviceName,
+        GOIO_MAX_SIZE_DEVICE_NAME,
+        VERNIER_DEFAULT_VENDOR_ID,
+        CYCLOPS_DEFAULT_PRODUCT_ID,
+        0
+    );
+
+    GOIO_SENSOR_HANDLE hDevice = GoIO_Sensor_Open(
+        deviceName,
+        VERNIER_DEFAULT_VENDOR_ID,
+        CYCLOPS_DEFAULT_PRODUCT_ID,
+        0
+    );
+
+    if (hDevice == nullptr) {
+        GoIO_Uninit();
+        return measurements;
+    }
+
+    // Tell Cyclops how often to measure
+    if (GoIO_Sensor_SetMeasurementPeriod(
+            hDevice,
+            period,
+            SKIP_TIMEOUT_MS_DEFAULT) != 0)
+    {
+        GoIO_Sensor_Close(hDevice);
+        GoIO_Uninit();
+        return measurements;
+    }
+
+    // Start measurements
+    if (GoIO_Sensor_SendCmdAndGetResponse(
+            hDevice,
+            SKIP_CMD_ID_START_MEASUREMENTS,
+            nullptr,
+            0,
+            nullptr,
+            nullptr,
+            SKIP_TIMEOUT_MS_DEFAULT) != 0)
+    {
+        GoIO_Sensor_Close(hDevice);
+        GoIO_Uninit();
+        return measurements;
+    }
+
+    // Wait for the first actual measurement.
+    int rawMeasurements[100];
+
+    int count = 0;
+
+    while (count == 0) {
+        count = GoIO_Sensor_ReadRawMeasurements(
+            hDevice,
+            rawMeasurements,
+            100
+        );
+
+        if (count == 0) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(1)
+            );
+        }
+    }
+
+    // We define the first actual measurement as t = 0.
+    double t = 0.0;
+
+    for (int i = 0; i < count; ++i) {
+        double volts =
+            GoIO_Sensor_ConvertToVoltage(
+                hDevice,
+                rawMeasurements[i]
+            );
+
+        double x =
+            GoIO_Sensor_CalibrateData(
+                hDevice,
+                volts
+            );
+
+        measurements.push_back({t, x});
+
+        t += period;
+
+        if (t >= time)
+            break;
+    }
+
+    // Continue collecting until requested duration
+    while (t < time) {
+
+        count = GoIO_Sensor_ReadRawMeasurements(
+            hDevice,
+            rawMeasurements,
+            100
+        );
+
+        if (count > 0) {
+
+            for (int i = 0; i < count; ++i) {
+
+                double volts =
+                    GoIO_Sensor_ConvertToVoltage(
+                        hDevice,
+                        rawMeasurements[i]
+                    );
+
+                double x =
+                    GoIO_Sensor_CalibrateData(
+                        hDevice,
+                        volts
+                    );
+
+                measurements.push_back({t, x});
+
+                t += period;
+
+                if (t >= time)
+                    break;
+            }
+        }
+        else {
+            // Nothing available yet.
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(1)
+            );
+        }
+    }
+
+    GoIO_Sensor_Close(hDevice);
+    GoIO_Uninit();
+
+    return measurements;
+}
 
 //UI ------------------------------------------------------------------------------------------------
 bool CenteredButton(const char* label) {
@@ -87,6 +248,58 @@ void SetGlobalScaleAndStyle(float scale, bool lightMode) {
     ImGui::StyleColorsDark();
 
   ImGui::GetIO().FontGlobalScale = scale;
+}
+
+enum class OutputFormat { TXT, CSV };
+
+//writer
+bool writeMeasurementsToFile(
+    const std::vector<std::vector<double>>& measurements,
+    const std::string& filename,
+    const std::string& delimiter = ";",
+    const std::string& decimalSeparator = ".",
+    OutputFormat format = OutputFormat::TXT) {
+
+  std::string fullFilename = filename;
+
+  if (format == OutputFormat::CSV) {
+    if (fullFilename.size() < 4 ||
+        fullFilename.substr(fullFilename.size() - 4) != ".csv") {
+      fullFilename += ".csv";
+    }
+  }
+  else {
+    if (fullFilename.size() < 4 || fullFilename.substr(fullFilename.size() - 4) != ".txt") {
+      fullFilename += ".txt";
+    }
+  }
+  std::ofstream file(fullFilename);
+
+  if (!file.is_open())
+    return false;
+
+  file << std::fixed << std::setprecision(6);
+
+  for (const auto& row : measurements) {
+    for (size_t i = 0; i < row.size(); ++i) {
+      if (i > 0)
+        file << delimiter;
+      // Write number into a temporary string
+      std::ostringstream value;
+      value << std::fixed << std::setprecision(6) << row[i];
+      std::string str = value.str();
+      // Change decimal separator
+      if (decimalSeparator != ".") {
+        size_t decimalPos = str.find('.');
+        if (decimalPos != std::string::npos)
+          str.replace(decimalPos, 1, decimalSeparator);
+      }
+      file << str;
+    }
+    file << '\n';
+    file.flush();
+  }
+  return true;
 }
 
 int main() {
@@ -142,12 +355,13 @@ int main() {
   static std::string outputDelimiter = ";";
   static std::string outputSeperator = ".";
 
-  static double measuringTime = 10.0; //s
-  static double measuringRate = 10.0; //Hz
+  static bool nextRefreshMesure = false;
+  std::vector<std::vector<double>> globalMesurements;
+
+  static double measuringTime = 1.0; //s
+  static double measuringFrequency = 1.0; //Hz
   std::string testStringGoIO;
 
-
-  enum class OutputFormat { TXT, CSV };
   static OutputFormat outputFormat = OutputFormat::TXT;
 
   bool isMainLoopRunning = true;
@@ -242,15 +456,15 @@ int main() {
       }
     }
 
-    ImGui::Text("Rate [Hz]:");
+    ImGui::Text("Frequency [Hz]:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(100.0f);
 
-    static char measurementRateBuff[128] = "";
-    if (ImGui::InputText("##MeasurementRate", measurementRateBuff, sizeof(measurementRateBuff))) {
+    static char measurementFrequencyBuff[128] = "";
+    if (ImGui::InputText("##MeasurementFrequency", measurementFrequencyBuff, sizeof(measurementFrequencyBuff))) {
       try {
-        measuringRate = std::stoi(measurementRateBuff);
-        std::cout << measuringRate << std::endl;
+        measuringFrequency = std::stoi(measurementFrequencyBuff);
+        std::cout << measuringFrequency << std::endl;
       }
       catch (const std::invalid_argument&) {
         std::cout << "NaN" << std::endl;
@@ -265,7 +479,7 @@ int main() {
     //OUTPUT CONFIG -------------------------------------------------------------------------------------------------------------
     ImGui::SetNextWindowPos(ImVec2(620, 320), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
-    ImGui::Begin("OUTPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+    ImGui::Begin("OUTPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
     //output filename
     ImGui::Text("Output filename:");
     static char outputFilenameBuf[128] = "";
@@ -332,7 +546,7 @@ int main() {
     ImGui::Text(("Status: " + measuremetStatus).c_str());
 
     if (ImGui::Button("START")) {
-      isMeasurementRunning = true; //todo
+      isMeasurementRunning = true;
     }
     if (isMeasurementRunning) {
     ImGui::SameLine();
@@ -358,7 +572,25 @@ int main() {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     SDL_GL_SwapWindow(window);
+
+    //IO waits one refresh
+    if (isMeasurementRunning) {
+      if (nextRefreshMesure) {
+        nextRefreshMesure = false;
+        //mesure
+        globalMesurements = mesureGoIOTimeRate(measuringTime, measuringFrequency);
+        //write
+        bool success = writeMeasurementsToFile(globalMesurements,outputFilename,outputDelimiter,outputSeperator,outputFormat);
+        if (!success) {
+          std::cerr << "Failed to write measurements to file.\n";
+        } else isMeasurementRunning = false;
+      }else {
+        nextRefreshMesure = true;
+      }
+    }
   }
+
+
 
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplSDL3_Shutdown();
