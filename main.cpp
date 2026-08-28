@@ -150,8 +150,6 @@ int main() {
   enum class OutputFormat { TXT, CSV };
   static OutputFormat outputFormat = OutputFormat::TXT;
 
-
-
   bool isMainLoopRunning = true;
   //main loop
   while (isMainLoopRunning) {
