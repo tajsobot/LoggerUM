@@ -5,13 +5,15 @@
 // own, so if something breaks later you know which half (GUI vs. sensor)
 // is at fault.
 
-#include "imgui.h"
-#include "imgui_impl_sdl3.h"
-#include "imgui_impl_opengl3.h"
-
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
+
 #include <cstdio>
+#include <string>
+
+#include "imgui.h"
+#include "imgui_impl_opengl3.h"
+#include "imgui_impl_sdl3.h"
 
 bool CenteredButton(const char* label) {
   ImGuiStyle& style = ImGui::GetStyle();
@@ -58,12 +60,13 @@ int main() {
   static bool isLightMode = true;
   static float globalScale = 1.0f;
 
-  static int wHeight = 1280;
-  static int wWidth = 720;
+  static int wHeight = 300*2 + 30;
+  static int wWidth = 600*2 + 30;
+
 
   SDL_Window* window = SDL_CreateWindow(
     "LoggerUM",
-    wHeight, wWidth,
+    wWidth, wHeight,
     SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
 
   if (window == nullptr) {
@@ -92,13 +95,19 @@ int main() {
   ImGui_ImplSDL3_InitForOpenGL(window, glContext);
   ImGui_ImplOpenGL3_Init("#version 150");
 
-  bool running = true;
+  static bool isMeasurementRunning = false;
+
+  static std::string outputFilename = "output";
+  static std::string outputFileType = "txt";
+
+
+  bool isMainLoopRunning = true;
   //main loop
-  while (running) {
+  while (isMainLoopRunning) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       ImGui_ImplSDL3_ProcessEvent(&event);
-      if (event.type == SDL_EVENT_QUIT) running = false;
+      if (event.type == SDL_EVENT_QUIT) isMainLoopRunning = false;
     }
 
     /// ------------------------------------------------------------------------------------------------------------
@@ -114,10 +123,10 @@ int main() {
     static char textBuf[128] = "";
     static int clickCount = 0;
 
-    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
-
-    ImGui::Begin("Visual Settings");
+    //SETTINGS
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Always);
+    ImGui::Begin("SETTINGS", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse);
     ImGui::Text("Color Mode:  ");
     ImGui::SameLine();
     if (ImGui::Button("Light")) {
@@ -131,7 +140,7 @@ int main() {
     ImGui::Text("Scale:  ");
     ImGui::SameLine();
     if (ImGui::Button("-0.25x")) {
-      globalScale *= 0.75;
+      globalScale -= 0.25;
     }
     ImGui::SameLine();
     if (ImGui::Button("Reset scale")) {
@@ -139,15 +148,45 @@ int main() {
     }
     ImGui::SameLine();
     if (ImGui::Button("+0.25x")) {
-      globalScale *= 1.25;
+      globalScale += 0.25;
     }
     SetGlobalScaleAndStyle(globalScale, isLightMode);
     ImGui::End();
 
-    ImGui::Begin("Input setup");
+    //INPUT CONFIG
+    ImGui::SetNextWindowPos(ImVec2(620, 10), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
+    ImGui::Begin("INPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+    //sensor dropdown
+    //test
+    //set 0
+    //calibrate
+    //time based {M,T | T M/s}
     ImGui::End();
 
-    ImGui::Begin("Output setup");
+    //OUTPUT CONFIG
+    ImGui::SetNextWindowPos(ImVec2(620, 320), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
+    ImGui::Begin("OUTPUT CONFIG", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse);
+    //output filename
+    //output filetype
+    //output delimiter
+    //output sepetrator
+    ImGui::End();
+
+    //MEASUREMENT
+    ImGui::SetNextWindowPos(ImVec2(10, 320), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Once);
+    ImGui::Begin("MEASUREMENT", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize| ImGuiWindowFlags_NoCollapse);
+    if (ImGui::Button("START")) {
+      isMeasurementRunning = true; //todo
+    }
+    if (isMeasurementRunning) {
+    ImGui::SameLine();
+      if (ImGui::Button("STOP")) {
+        isMeasurementRunning = false;
+      }
+    }
     ImGui::End();
 
     /// ------------------------------------------------------------------------------------------------------------
